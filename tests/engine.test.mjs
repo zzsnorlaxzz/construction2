@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {execute,intersections,validatePlan} from '../engine.mjs';
+const o=(kind,args={})=>({kind,source:'학생 원문',...args});
+const base=(anchor='B')=>[o('line',{id:'l'}),o('point',{id:anchor,a:'l'})];
+const measure=radius=>o('measure',{radius});
+const circle=(id,a,radius)=>o('circle',{id,a,radius});
+const ix=(id,a,b,choice='right',id2)=>o('intersect',{id,a,b,choice,...(id2?{id2}:{})});
+const join=(a,b)=>o('segment',{a,b});
+const bc=()=>[measure('a'),circle('k1','B','a'),ix('C','k1','l')];
+const copyB=()=>[o('given_arc',{angle:'B',a:'M',b:'N',radius:'rB'}),circle('k0','B','rB'),ix('P','k0','l'),measure('MN'),circle('kQ','P','MN'),ix('Q','k0','kQ','upper'),o('ray',{id:'BQ',a:'B',b:'Q'})];
+test('circle-circle intersections preserve both reflected solutions',()=>{const pts=intersections({type:'circle',p:{x:0,y:0},r:5},{type:'circle',p:{x:6,y:0},r:4.5});assert.equal(pts.length,2);assert.ok(Math.abs(pts[0].y+pts[1].y)<1e-7);});
+test('ray excludes intersections behind the endpoint',()=>{assert.equal(intersections({type:'ray',p:{x:5,y:0},d:{x:1,y:0}},{type:'circle',p:{x:0,y:0},r:1}).length,0);});
+test('separate line and point operations work; wrong numeric radius is retained and rejected at goal',()=>{const r=execute('segment',[...base('P'),circle('k','P','1cm'),ix('Q','k','l'),join('P','Q')]);assert.equal(r.state.objects.k.r,1);assert.equal(r.assessment.type,'error');});
+test('equal segment succeeds with measurement and explicit right intersection',()=>{assert.equal(execute('segment',[...base('P'),measure('AB'),circle('k','P','AB'),ix('Q','k','l'),join('P','Q')]).assessment.type,'complete');});
+test('does not invent a measurement or a missing center',()=>{assert.equal(execute('sss',[...base(),circle('k','B','c')]).assessment.type,'error');assert.equal(execute('sss',[circle('k','B','3')]).state.objects.k,undefined);});
+test('missing angle transfer prerequisites fail',()=>{assert.equal(execute('asa',[...base(),measure('MN')]).assessment.type,'error');});
+test('ambiguous two intersections ask and leave point undefined',()=>{const r=execute('sss',[...base(),...bc(),measure('c'),circle('k2','B','c'),measure('b'),circle('k3','C','b'),ix('A','k2','k3','unspecified')]);assert.equal(r.assessment.type,'clarify');assert.equal(r.state.points.A,undefined);});
+test('SSS alternative circle orders both succeed',()=>{for(const rev of [false,true]){let arcs=[[measure('c'),circle('k2','B','c')],[measure('b'),circle('k3','C','b')]];if(rev)arcs.reverse();assert.equal(execute('sss',[...base(),...bc(),...arcs.flat(),ix('A','k2','k3','upper'),join('A','B'),join('A','C'),join('B','C')]).assessment.type,'complete');}});
+test('triangle inequality returns no intersections without labelling student logic as wrong',()=>{const r=execute('inequality',[...base(),...bc(),measure('c'),circle('k2','B','c'),measure('b'),circle('k3','C','b'),ix('A','k2','k3','upper')]);assert.equal(r.assessment.type,'impossible');});
+test('copy angle and SAS are calculated from circles',()=>{assert.equal(execute('angle',[...base(),...copyB()]).assessment.type,'complete');const r=execute('sas',[...base(),...bc(),...copyB(),measure('c'),circle('k2','B','c'),ix('A','k2','BQ'),join('A','B'),join('A','C'),join('B','C')]);assert.equal(r.assessment.type,'complete');});
+test('ASA succeeds with both endpoint angles, and a missing C blocks transfer',()=>{
+ const c=[o('given_arc',{angle:'C',a:'E',b:'F',radius:'rC'}),circle('kC','C','rC'),ix('R','kC','l','left'),measure('EF'),circle('kS','R','EF'),ix('S','kC','kS','upper'),o('ray',{id:'CS',a:'C',b:'S'})];
+ const r=execute('asa',[...base(),...bc(),...copyB(),...c,ix('A','BQ','CS'),join('A','B'),join('A','C'),join('B','C')]);assert.equal(r.assessment.type,'complete');assert.equal(execute('asa',[...base(),...c]).assessment.type,'error');
+});
+test('SSA has two noncongruent solutions with b=AC and c=AB',()=>{const r=execute('ssa',[...base(),...copyB(),measure('c'),circle('k1','B','c'),ix('A','k1','BQ'),measure('b'),circle('k2','A','b'),ix('C1','k2','l','both','C2'),join('A','B'),join('A','C1'),join('B','C1'),join('A','C2'),join('B','C2')]);assert.equal(r.assessment.type,'complete');assert.match(r.assessment.message,/합동이 아닙니다/);});
+test('partial instructions cannot produce completion',()=>{assert.equal(execute('sss',base()).assessment.type,'incomplete');});
+test('AI source evidence must come from the original prompt',()=>{assert.throws(()=>validatePlan({summary:'요약',operations:[o('line',{id:'l'})]},'다른 문장'));assert.throws(()=>validatePlan({summary:'요약',operations:[{...o('line'),code:'alert(1)'}]},'학생 원문'));});

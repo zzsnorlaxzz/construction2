@@ -1,0 +1,6 @@
+.env
+.env.*
+.git
+tests
+node_modules
+original.html
